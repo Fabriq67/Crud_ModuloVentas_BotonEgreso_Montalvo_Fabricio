@@ -1,0 +1,152 @@
+-- Tabla CLIENTES
+CREATE TABLE CLIENTES (
+    clicodigo VARCHAR(10) PRIMARY KEY,
+    clinombre VARCHAR(100),
+    cliidentificacion VARCHAR(13),
+    clidireccion VARCHAR(200),
+    clitelefono VARCHAR(10),
+    clicelular VARCHAR(10),
+    cliemail VARCHAR(100),
+    clitipo VARCHAR(3),
+    clistatus VARCHAR(3)
+);
+
+-- Tabla USUARIOS
+CREATE TABLE USUARIOS (
+    clicodigo VARCHAR(10),
+    username VARCHAR(50),
+    password VARCHAR(50),
+    PRIMARY KEY (username),
+    FOREIGN KEY (clicodigo) REFERENCES CLIENTES(clicodigo)
+);
+
+-- Tabla PRODUCTOS
+CREATE TABLE PRODUCTOS (
+    procodigo VARCHAR(10) PRIMARY KEY,
+    prodescripcion VARCHAR(100),
+    prounidadmedida VARCHAR(10),
+    prosaldo_inicial INT,
+    proingresos INT,
+    proegresos INT,
+    proajustes INT,
+    prosaldo_final INT,
+    procostoum DECIMAL(10, 2),
+    proprecioum DECIMAL(10, 2),
+    prostatus VARCHAR(3)
+);
+
+-- Tabla FACTURAS
+CREATE TABLE FACTURAS (
+    facnumero VARCHAR(20) PRIMARY KEY,
+    clicodigo VARCHAR(10),
+    facfecha DATE,
+    facsubtotal DECIMAL(10, 2),
+    facformapago VARCHAR(10),
+    facstatus VARCHAR(10),
+    FOREIGN KEY (clicodigo) REFERENCES CLIENTES(clicodigo)
+);
+
+-- Tabla PXF (Productos por Factura)
+CREATE TABLE PXF (
+    facnumero VARCHAR(20),
+    procodigo VARCHAR(10),
+    pxfcantidad INT,
+    pxfvalor DECIMAL(10, 2),
+    pxfsubtotal DECIMAL(10, 2),
+    pxfstatus VARCHAR(10),
+    PRIMARY KEY (facnumero, procodigo),
+    FOREIGN KEY (facnumero) REFERENCES FACTURAS(facnumero),
+    FOREIGN KEY (procodigo) REFERENCES PRODUCTOS(procodigo)
+);
+
+-- Tabla ASIENTOS_CONTABLES
+CREATE TABLE ASIENTOS_CONTABLES (
+    asientoid SERIAL PRIMARY KEY,
+    facnumero VARCHAR(20),
+    fecha DATE,
+    cuenta_debe VARCHAR(50),
+    cuenta_haber VARCHAR(50),
+    monto DECIMAL(10, 2),
+    descripcion VARCHAR(255),
+    FOREIGN KEY (facnumero) REFERENCES FACTURAS(facnumero)
+);
+
+-- Tabla ORDENES_EGRESO
+CREATE TABLE ORDENES_EGRESO (
+    ordenid SERIAL PRIMARY KEY,
+    facnumero VARCHAR(20),
+    fecha DATE,
+    procodigo VARCHAR(10),
+    cantidad INT,
+    estado VARCHAR(10),
+    FOREIGN KEY (facnumero) REFERENCES FACTURAS(facnumero),
+    FOREIGN KEY (procodigo) REFERENCES PRODUCTOS(procodigo)
+);
+
+-- Tabla AUDITORIA
+CREATE TABLE AUDITORIA (
+    auditid SERIAL PRIMARY KEY,
+    facnumero VARCHAR(20),
+    fecha DATE,
+    accion VARCHAR(50),
+    tabla_afectada VARCHAR(50),
+    descripcion VARCHAR(255),
+    FOREIGN KEY (facnumero) REFERENCES FACTURAS(facnumero)
+);
+
+-- Función aprobar_factura
+CREATE OR REPLACE FUNCTION aprobar_factura(fac_num VARCHAR)
+RETURNS VOID AS $$
+BEGIN
+    -- Actualización del estado de la factura y detalles
+    UPDATE FACTURAS
+    SET facstatus = 'APROBADO'
+    WHERE facnumero = fac_num;
+
+    UPDATE PXF
+    SET pxfstatus = 'APROBADO'
+    WHERE facnumero = fac_num;
+
+    -- Generación de asientos contables
+    INSERT INTO ASIENTOS_CONTABLES (facnumero, fecha, cuenta_debe, cuenta_haber, monto, descripcion)
+    VALUES (fac_num, CURRENT_DATE, 'Inventarios', 'Cuentas por Cobrar', 100.00, 'Asiento contable por factura ' || fac_num);
+
+    -- Generación de órdenes de egreso
+    INSERT INTO ORDENES_EGRESO (facnumero, fecha, procodigo, cantidad, estado)
+    SELECT facnumero, CURRENT_DATE, procodigo, pxfcantidad, 'APROBADO'
+    FROM PXF
+    WHERE facnumero = fac_num;
+
+    -- Actualización del egreso en productos
+    UPDATE PRODUCTOS
+    SET proegresos = proegresos + pxf.pxfcantidad
+    FROM PXF pxf
+    WHERE PRODUCTOS.procodigo = pxf.procodigo AND pxf.facnumero = fac_num;
+
+    -- Registro en auditoría
+    INSERT INTO AUDITORIA (facnumero, fecha, accion, tabla_afectada, descripcion)
+    VALUES (fac_num, CURRENT_DATE, 'APROBACION', 'FACTURAS', 'Aprobación de factura ' || fac_num);
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- Datos de ejemplo para CLIENTES
+INSERT INTO CLIENTES (clicodigo, clinombre, cliidentificacion, clidireccion, clitelefono, clicelular, cliemail, clitipo, clistatus)
+VALUES 
+('CLI-001', 'CORPORACION FAVORITA C.A.', '1702996501', 'Sangolquí Av. 6 de Diciembre y Julio Moreno Quito - Ecuador', '022996500', '0992996500', 'ventas@favorita.com.ec', 'JUR', 'ACT'),
+('CLI-002', 'CONDOR JAVIER', '0702996502', 'Centro Av. 9 De Octubre 729 y Boyacá Guayaquil - Ecuador', '022980980', '0992996500', 'ventas@elrosado.com.ec', 'NAT', 'ACT');
+
+-- Datos de ejemplo para USUARIOS
+INSERT INTO USUARIOS (clicodigo, username, password) VALUES 
+('CLI-001', 'user1', 'password1'),
+('CLI-002', 'user2', 'password2');
+
+-- Datos de ejemplo para PRODUCTOS
+INSERT INTO PRODUCTOS (procodigo, prodescripcion, prounidadmedida, prosaldo_inicial, proingresos, proegresos, proajustes, prosaldo_final, procostoum, proprecioum, prostatus)
+VALUES 
+('P-0001', 'CEREAL TRIGO ENTERO', 'QQ', 0, 0, 0, 0, 0, 1, 2, 'ACT'),
+('P-0002', 'MORA FRUTO COMPLETO', 'CAJ', 0, 0, 0, 0, 0, 1, 2, 'ACT');
+('P-0003', 'CARNE DE CERDO CON HUESO', 'KG ', 150, 0, 0, 0, 150, 20, 4, 'ACT'),
+('P-0004', 'SARDINAS EN CONSERVA', 'PAQ', 250, 0, 0, 0, 250, 16, 3.2, 'ACT'),
+('P-0005', 'LECHE LÍQUIDA PASTEURIZADA', 'LIT', 300, 0, 0, 0, 300, 30, 6, 'ACT'),
+('P-0006', 'ATÚN EN CONSERVA', 'UNI', 400, 0, 0, 0, 400, 35, 7, 'ACT');
